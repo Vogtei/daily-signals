@@ -1,0 +1,25 @@
+# Credentials
+.env
+
+# Runtime state (ephemeral on Render, local only)
+last_run.json
+seen_articles.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Virtual environment
+venv/
+.venv/
+env/
+
+# Logs
+newsbot.log
+*.log
+
+# macOS
+.DS_Store
