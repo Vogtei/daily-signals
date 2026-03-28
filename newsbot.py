@@ -13,7 +13,8 @@ import logging
 import os
 import pathlib
 import xml.etree.ElementTree as ET
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from difflib import SequenceMatcher
 
 import anthropic
 import feedparser
@@ -25,14 +26,15 @@ from telegram import Bot
 # Config
 # ---------------------------------------------------------------------------
 
-load_dotenv()
+load_dotenv(override=True)
 
 ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
-LAST_RUN_FILE = pathlib.Path(__file__).parent / "last_run.json"
-SEEN_ARTICLES_FILE = pathlib.Path(__file__).parent / "seen_articles.json"
+_STATE_DIR = pathlib.Path(os.environ.get("STATE_DIR", pathlib.Path(__file__).parent))
+LAST_RUN_FILE = _STATE_DIR / "last_run.json"
+SEEN_ARTICLES_FILE = _STATE_DIR / "seen_articles.json"
 
 BIORXIV_KEYWORDS = [
     "ai", "artificial intelligence", "machine learning", "deep learning",
@@ -57,11 +59,27 @@ ARXIV_QUERIES = [
 ]
 
 JOURNAL_FEEDS = [
-    "https://www.nature.com/nbt.rss",
+    # Nature family
+    "https://www.nature.com/nature.rss",
+    "https://www.nature.com/nm.rss",           # Nature Medicine
+    "https://www.nature.com/nbt.rss",           # Nature Biotechnology
+    "https://www.nature.com/ng.rss",            # Nature Genetics
+    "https://www.nature.com/ncomms.rss",        # Nature Communications
+    # Science family
+    "https://www.science.org/action/showFeed?type=etoc&feed=rss&jc=science",
+    "https://www.science.org/action/showFeed?type=etoc&feed=rss&jc=stm",  # Science Translational Medicine
+    # Clinical top journals
+    "https://www.nejm.org/action/showFeed?jc=nejm&type=etoc&feed=rss",
     "https://www.thelancet.com/action/showFeed?jc=lancet&type=etoc&feed=rss",
+    "https://jamanetwork.com/rss/site_3/67.xml",  # JAMA
+    "https://www.bmj.com/rss/thebmj.xml",
+    # Cell family
     "https://www.cell.com/cell/rss",
-    "https://www.science.org/action/showFeed?type=etoc&feed=rss&jc=stm",
-    "https://jamanetwork.com/rss/site_3/67.xml",
+    "https://www.cell.com/cell-reports-medicine/rss",
+    # Open access / preprint-adjacent
+    "https://elifesciences.org/rss/recent.xml",
+    "https://www.pnas.org/rss/current.xml",
+    # AI/ML in medicine
     "https://importai.substack.com/feed",
 ]
 
@@ -82,6 +100,8 @@ class Article:
     url: str
     published: datetime.datetime
     source: str  # "arxiv" | "biorxiv" | "medrxiv" | "journal"
+    abstract: str = ""
+    alt_sources: list = field(default_factory=list)  # [(source, url), ...]
 
 
 # ---------------------------------------------------------------------------
@@ -110,25 +130,36 @@ def save_last_run() -> None:
 # 7-day seen articles deduplication
 # ---------------------------------------------------------------------------
 
-def load_seen_articles() -> dict[str, str]:
-    """Load {url: iso_timestamp} of articles sent in the last 7 days."""
+def load_seen_articles() -> dict[str, dict]:
+    """
+    Load seen articles index. Format (v2):
+      { url: {"ts": iso, "title": str}, ... }
+    Also accepts legacy {url: iso_str} and upgrades on the fly.
+    """
     if not SEEN_ARTICLES_FILE.exists():
         return {}
     try:
-        return json.loads(SEEN_ARTICLES_FILE.read_text())
+        raw = json.loads(SEEN_ARTICLES_FILE.read_text())
+        upgraded = {}
+        for url, val in raw.items():
+            if isinstance(val, str):
+                upgraded[url] = {"ts": val, "title": ""}
+            else:
+                upgraded[url] = val
+        return upgraded
     except (json.JSONDecodeError, ValueError):
         return {}
 
 
-def save_seen_articles(seen: dict[str, str], new_urls: list[str]) -> None:
-    """Add new URLs and purge entries older than 7 days."""
+def save_seen_articles(seen: dict[str, dict], new_articles: list) -> None:
+    """Add new articles (url + title) and purge entries older than 7 days."""
     now = datetime.datetime.now(datetime.timezone.utc)
     cutoff = now - datetime.timedelta(days=7)
-    for url in new_urls:
-        seen[url] = now.isoformat()
+    for a in new_articles:
+        seen[a.url] = {"ts": now.isoformat(), "title": a.title}
     seen = {
-        url: ts for url, ts in seen.items()
-        if datetime.datetime.fromisoformat(ts) > cutoff
+        url: val for url, val in seen.items()
+        if datetime.datetime.fromisoformat(val["ts"]) > cutoff
     }
     SEEN_ARTICLES_FILE.write_text(json.dumps(seen, indent=2))
 
@@ -151,7 +182,8 @@ def fetch_journals(since: datetime.datetime) -> list[Article]:
                 url = entry.get("link", "").strip()
                 if not title or not url:
                     continue
-                articles.append(Article(title=title, url=url, published=pub, source="journal"))
+                abstract = (getattr(entry, "summary", "") or "")[:2000]
+                articles.append(Article(title=title, url=url, published=pub, source="journal", abstract=abstract))
         except Exception as exc:
             logger.warning("Failed to fetch journal feed %s: %s", feed_url, exc)
     logger.info("Journals/Newsletters: %d articles", len(articles))
@@ -201,12 +233,13 @@ def _fetch_rxiv(server: str, keywords: list[str], since: datetime.datetime) -> l
         doi = paper.get("doi", "").strip()
         date_str = paper.get("date", "")
         category = paper.get("category", "").lower()
-        abstract = paper.get("abstract", "").lower()
+        abstract_raw = paper.get("abstract", "")
+        abstract_lower = abstract_raw.lower()
 
         if not title or not doi:
             continue
 
-        text = f"{title.lower()} {category} {abstract[:300]}"
+        text = f"{title.lower()} {category} {abstract_lower[:300]}"
         if not any(kw in text for kw in keywords):
             continue
 
@@ -220,7 +253,7 @@ def _fetch_rxiv(server: str, keywords: list[str], since: datetime.datetime) -> l
         except ValueError:
             pub = datetime.datetime.now(datetime.timezone.utc)
 
-        articles.append(Article(title=title, url=paper_url, published=pub, source=server))
+        articles.append(Article(title=title, url=paper_url, published=pub, source=server, abstract=abstract_raw.strip()))
 
     return articles
 
@@ -278,6 +311,8 @@ def _parse_arxiv_xml(xml_text: str, since: datetime.datetime) -> list[Article]:
 
         title = " ".join(title_el.text.split())
         url = id_el.text.strip()
+        summary_el = entry.find("atom:summary", NS)
+        abstract = " ".join(summary_el.text.split()) if summary_el is not None and summary_el.text else ""
 
         try:
             pub = datetime.datetime.fromisoformat(pub_el.text.strip().replace("Z", "+00:00"))
@@ -285,7 +320,7 @@ def _parse_arxiv_xml(xml_text: str, since: datetime.datetime) -> list[Article]:
             continue
 
         if pub > since:
-            articles.append(Article(title=title, url=url, published=pub, source="arxiv"))
+            articles.append(Article(title=title, url=url, published=pub, source="arxiv", abstract=abstract))
 
     return articles
 
@@ -294,17 +329,27 @@ def _parse_arxiv_xml(xml_text: str, since: datetime.datetime) -> list[Article]:
 # Aggregation & deduplication
 # ---------------------------------------------------------------------------
 
+def _titles_similar(a: str, b: str, threshold: float = 0.80) -> bool:
+    """Fuzzy title comparison — True if ≥ threshold similarity."""
+    return SequenceMatcher(None, a.lower()[:120], b.lower()[:120]).ratio() >= threshold
+
+
 def aggregate_articles(
     arxiv: list[Article],
     biorxiv: list[Article],
     medrxiv: list[Article],
     journals: list[Article],
-    seen_articles: dict[str, str],
+    seen_articles: dict[str, dict],
     max_articles: int = 60,
 ) -> list[Article]:
-    """Merge, deduplicate by URL, skip 7-day seen articles, cap at max_articles."""
+    """Merge, semantic-deduplicate (within run + cross-run), skip seen, cap."""
     seen_urls: set[str] = set()
     deduped: list[Article] = []
+
+    # Build list of previously seen titles for cross-run fuzzy check
+    seen_titles: list[str] = [
+        v["title"] for v in seen_articles.values() if v.get("title")
+    ]
 
     all_articles = (
         sorted(biorxiv, key=lambda a: a.published, reverse=True)
@@ -319,12 +364,72 @@ def aggregate_articles(
             continue
         if article.url in seen_articles:
             continue
+
+        # Cross-run semantic dedup: skip if similar title was sent before
+        if any(_titles_similar(article.title, t) for t in seen_titles):
+            logger.debug("Skipping (seen last week): %s", article.title[:60])
+            continue
+
+        # Within-run semantic dedup: merge into existing if title similar
+        duplicate = next(
+            (e for e in deduped if _titles_similar(article.title, e.title)),
+            None,
+        )
+        if duplicate:
+            duplicate.alt_sources.append((article.source, article.url))
+            seen_urls.add(normalized)
+            continue
+
         seen_urls.add(normalized)
         deduped.append(article)
         if len(deduped) >= max_articles:
             break
 
     return deduped
+
+
+def select_diverse_highlights(articles: list[Article], n: int = 5) -> list[Article]:
+    """Pick n highlights with source diversity: ~2 bio, ~2 med, ~1 arxiv."""
+    with_abstract = [a for a in articles if a.abstract and len(a.abstract.strip()) >= 50]
+
+    bio = [a for a in with_abstract if a.source in ("biorxiv", "journal")]
+    med = [a for a in with_abstract if a.source == "medrxiv"]
+    ai  = [a for a in with_abstract if a.source == "arxiv"]
+
+    selected: list[Article] = []
+    used: set[str] = set()
+
+    def pick(pool: list[Article], count: int) -> None:
+        for a in pool:
+            if len(selected) - len(used) + len(selected) >= n:
+                break
+            if a.url not in used and len([s for s in selected if s.source == a.source or
+                    (a.source in ("biorxiv","journal") and s.source in ("biorxiv","journal"))]) < count:
+                selected.append(a)
+                used.add(a.url)
+
+    # Simpler quota approach
+    selected.clear()
+    used.clear()
+
+    def _pick_up_to(pool: list[Article], count: int) -> list[Article]:
+        picks = []
+        for a in pool:
+            if a.url not in used and len(picks) < count:
+                picks.append(a)
+                used.add(a.url)
+        return picks
+
+    selected += _pick_up_to(bio, 2)
+    selected += _pick_up_to(med, 2)
+    selected += _pick_up_to(ai, 1)
+
+    # Fill remaining slots from any source
+    if len(selected) < n:
+        rest = [a for a in with_abstract if a.url not in used]
+        selected += rest[:n - len(selected)]
+
+    return selected[:n]
 
 
 # ---------------------------------------------------------------------------
@@ -493,15 +598,120 @@ def main() -> None:
         save_last_run()
         return
 
-    digest = summarize_with_claude(all_articles)
-    if not digest:
-        logger.error("Claude summarization returned empty. Aborting without updating timestamp.")
+    from claude_analyzer import (
+        generate_newsletter_content,
+        format_newsletter, generate_podcast_script,
+    )
+    from podcast_generator import PodcastGenerator
+
+    gen = PodcastGenerator()
+    top_paper = gen.get_top_paper(all_articles)
+
+    if not top_paper:
+        logger.error("No suitable paper found. Aborting.")
         raise SystemExit(1)
 
+    logger.info("Top paper: %s", top_paper.title[:80])
     date_str = datetime.datetime.now().strftime("%d.%m.%Y")
-    asyncio.run(send_telegram_digest(digest, date_str))
 
-    save_seen_articles(seen_articles, [a.url for a in all_articles])
+    # --- Text Newsletter (top 5 highlights, source-diverse) ---
+    highlight_papers = select_diverse_highlights(all_articles, n=5)
+    # Ensure top_paper is always first
+    if highlight_papers and highlight_papers[0].url != top_paper.url:
+        highlight_papers = [p for p in highlight_papers if p.url != top_paper.url]
+        highlight_papers = [top_paper] + highlight_papers[:4]
+
+    papers_data = []
+    for i, paper in enumerate(highlight_papers):
+        model = "claude-opus-4-6" if i == 0 else "claude-haiku-4-5-20251001"
+        content = generate_newsletter_content(
+            title=paper.title,
+            abstract=paper.abstract,
+            source=paper.source,
+            model=model,
+        )
+        papers_data.append((content, paper.url, paper.source, paper.alt_sources))
+        logger.info("Newsletter content generated for highlight %d: %s", i + 1, paper.title[:60])
+
+    highlight_urls = {p.url for p in highlight_papers}
+    side_articles = [a for a in all_articles if a.url not in highlight_urls]
+    newsletter_text = format_newsletter(
+        papers=papers_data,  # now 4-tuples: (content, url, source, alt_sources)
+        date_str=date_str,
+        side_articles=side_articles,
+    )
+
+    async def _send_newsletter():
+        from telegram import Bot
+        bot = Bot(token=TELEGRAM_BOT_TOKEN)
+        chunks = _split_message(newsletter_text)
+        async with bot:
+            for chunk in chunks:
+                try:
+                    await bot.send_message(
+                        chat_id=TELEGRAM_CHAT_ID,
+                        text=chunk,
+                        parse_mode="Markdown",
+                        disable_web_page_preview=True,
+                    )
+                except Exception:
+                    await bot.send_message(chat_id=TELEGRAM_CHAT_ID, text=chunk)
+        logger.info("Newsletter sent (%d chunk(s))", len(chunks))
+
+    asyncio.run(_send_newsletter())
+
+    # --- Podcast (non-fatal) ---
+    script = ""
+    try:
+        script = generate_podcast_script(
+            title=top_paper.title,
+            abstract=top_paper.abstract,
+            source=top_paper.source,
+        )
+        mp3_path = gen.run({}, top_paper, script)
+
+        async def _send_podcast():
+            from telegram import Bot
+            bot = Bot(token=TELEGRAM_BOT_TOKEN)
+            async with bot:
+                lead_content = papers_data[0][0] if papers_data else {}
+                await gen.send_to_telegram(
+                    mp3_path, bot, TELEGRAM_CHAT_ID,
+                    title_de=lead_content.get("title_simplified", top_paper.title),
+                    source=top_paper.source,
+                    paper_url=top_paper.url,
+                )
+
+        asyncio.run(_send_podcast())
+
+    except Exception as exc:
+        logger.error("Podcast generation failed (newsletter already sent): %s", exc)
+
+    # --- Cost tracking + monthly report ---
+    from cost_tracker import record_run, should_send_monthly_report, build_monthly_report, mark_report_sent
+    record_run(script)
+
+    if should_send_monthly_report():
+        report_text = build_monthly_report()
+
+        async def _send_report():
+            from telegram import Bot
+            bot = Bot(token=TELEGRAM_BOT_TOKEN)
+            async with bot:
+                await bot.send_message(
+                    chat_id=TELEGRAM_CHAT_ID,
+                    text=report_text,
+                    parse_mode="Markdown",
+                )
+
+        try:
+            asyncio.run(_send_report())
+            mark_report_sent()
+            logger.info("Monthly cost report sent.")
+        except Exception as exc:
+            logger.error("Failed to send monthly report: %s", exc)
+
+    save_seen_articles(seen_articles, all_articles)
     save_last_run()
     logger.info("Done.")
 

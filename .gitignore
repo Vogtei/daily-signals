@@ -1,9 +1,10 @@
 # Credentials
 .env
 
-# Runtime state (ephemeral on Render, local only)
+# Runtime state (persistent on Render disk, local only)
 last_run.json
 seen_articles.json
+costs.json
 
 # Python
 __pycache__/

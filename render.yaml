@@ -1,0 +1,21 @@
+services:
+  - type: cron
+    name: daily-signals-bot
+    runtime: docker
+    schedule: "0 7 * * 3"  # Mittwoch 7 Uhr UTC = 8 Uhr CET / 9 Uhr CEST
+    dockerfilePath: ./Dockerfile
+    disk:
+      name: bot-state
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: STATE_DIR
+        value: /data
+      - key: ANTHROPIC_API_KEY
+        sync: false
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: ELEVENLABS_API_KEY
+        sync: false
