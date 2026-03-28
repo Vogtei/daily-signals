@@ -671,6 +671,7 @@ def main() -> None:
                     date_str   = date_str,
                     title_en   = top_paper.title,
                     abstract   = top_paper.abstract,
+                    paper_url  = top_paper.url,
                 )
                 if img_bytes:
                     caption = (

@@ -33,6 +33,110 @@ _SOURCE_LABELS = {
     "journal": "Journal",
 }
 
+# ── Paper og:image ────────────────────────────────────────────────────────────
+
+def _fetch_paper_image(paper_url: str) -> bytes | None:
+    """
+    Try to get an og:image from journal paper pages (Nature, Science, NEJM, etc.).
+    bioRxiv and medRxiv block all scraping — skipped here, Wikipedia handles those.
+    """
+    if not paper_url:
+        return None
+    # Preprint servers block all bots — skip immediately
+    if "biorxiv.org" in paper_url or "medrxiv.org" in paper_url or "arxiv.org" in paper_url:
+        return None
+    try:
+        import httpx
+        from html.parser import HTMLParser
+
+        class _OGParser(HTMLParser):
+            og_image: str | None = None
+            def handle_starttag(self, tag, attrs):
+                if tag == "meta":
+                    d = dict(attrs)
+                    content = d.get("content", "")
+                    prop = d.get("property", "") or d.get("name", "")
+                    if prop in ("og:image", "twitter:image", "twitter:image:src") and content:
+                        if not self.og_image:   # first match wins
+                            self.og_image = content
+
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml,*/*;q=0.8",
+        }
+        with httpx.Client(timeout=15, headers=headers, follow_redirects=True) as client:
+            resp = client.get(paper_url)
+            resp.raise_for_status()
+            parser = _OGParser()
+            parser.feed(resp.text[:30_000])
+            if not parser.og_image:
+                return None
+            img_resp = client.get(parser.og_image)
+            img_resp.raise_for_status()
+            ct = img_resp.headers.get("content-type", "")
+            if not ct.startswith("image/") or len(img_resp.content) < 8_000:
+                return None
+            logger.info("Journal og:image: %d bytes from %s", len(img_resp.content), paper_url)
+            return img_resp.content
+    except Exception as exc:
+        logger.debug("Paper image fetch failed (%s): %s", type(exc).__name__, exc)
+        return None
+
+
+# ── Wikipedia image ────────────────────────────────────────────────────────────
+
+def _fetch_wikipedia_image(title_en: str) -> bytes | None:
+    """Search Wikipedia for the topic and return the best thumbnail."""
+    if not title_en:
+        return None
+    try:
+        import httpx
+        keywords = " ".join(title_en.split()[:6])
+        wiki_headers = {
+            "User-Agent": "DailySignalsBot/1.0 (https://github.com/Vogtei/daily-signals; bot)",
+            "Accept": "application/json",
+        }
+        with httpx.Client(timeout=12, headers=wiki_headers) as client:
+            search = client.get(
+                "https://en.wikipedia.org/w/api.php",
+                params={"action": "query", "list": "search",
+                        "srsearch": keywords, "format": "json", "srlimit": 5},
+            )
+            search.raise_for_status()
+            results = search.json().get("query", {}).get("search", [])
+            if not results:
+                return None
+            for hit in results:
+                slug = hit["title"].replace(" ", "_")
+                try:
+                    s = client.get(
+                        f"https://en.wikipedia.org/api/rest_v1/page/summary/{slug}",
+                        timeout=10,
+                    )
+                    s.raise_for_status()
+                    data = s.json()
+                    thumb = data.get("originalimage") or data.get("thumbnail")
+                    if not thumb:
+                        continue
+                    if thumb.get("width", 0) < 300:
+                        continue
+                    ir = client.get(thumb["source"], timeout=20, follow_redirects=True)
+                    ir.raise_for_status()
+                    if len(ir.content) < 15_000:
+                        continue
+                    logger.info("Wikipedia image '%s': %d bytes", hit["title"], len(ir.content))
+                    return ir.content
+                except Exception:
+                    continue
+    except Exception as exc:
+        logger.debug("Wikipedia image fetch failed (%s): %s", type(exc).__name__, exc)
+    return None
+
+
 # ── DALL-E ─────────────────────────────────────────────────────────────────────
 
 def _build_visual_prompt(title_en: str, abstract: str) -> str:
@@ -238,16 +342,30 @@ def generate_highlight_card(
     date_str: str = "",
     title_en: str = "",
     abstract: str = "",
+    paper_url: str = "",
 ) -> bytes | None:
     """
     Return image bytes for the newsletter highlight.
 
-    Tries DALL-E 3 first (needs OPENAI_API_KEY).
-    Falls back to a Pillow text card if DALL-E is unavailable or fails.
-    Returns None only if both paths fail.
+    Priority:
+      1. og:image scraped from the paper page (bioRxiv / medRxiv / journal)
+      2. Wikipedia thumbnail for the topic
+      3. DALL-E 3 AI-generated image (needs OPENAI_API_KEY)
+      4. Pillow text card (always works)
     """
+    img = _fetch_paper_image(paper_url)
+    if img:
+        logger.info("Using paper og:image")
+        return img
+
+    img = _fetch_wikipedia_image(title_en or title_de)
+    if img:
+        logger.info("Using Wikipedia image")
+        return img
+
     img = _generate_dalle_image(title_en or title_de, abstract)
     if img:
         return img
+
     logger.info("Using Pillow fallback card")
     return _generate_pillow_card(title_de, intro, source, study_phase, date_str)
