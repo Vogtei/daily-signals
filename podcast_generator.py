@@ -143,7 +143,14 @@ class PodcastGenerator:
                 audio = self._tts_request(
                     el_client, _make_settings(current_tone), clean
                 )
-                speech_blocks[idx] = audio
+                if audio is not None:
+                    speech_blocks[idx] = audio
+
+        successful = len(speech_blocks)
+        total_speech = sum(1 for t, _ in segments if t == "speech")
+        logger.info("TTS: %d/%d speech blocks generated", successful, total_speech)
+        if successful == 0:
+            raise RuntimeError("All TTS requests failed — check ELEVENLABS_API_KEY and logs above")
 
         # Assemble final track
         jingle_intro      = self._load_audio(INTRO_JINGLE)
@@ -234,7 +241,7 @@ class PodcastGenerator:
             )
             return AudioSegment.from_mp3(io.BytesIO(b"".join(stream)))
         except Exception as exc:
-            logger.error("TTS failed: %s", exc)
+            logger.error("TTS failed (%s): %s", type(exc).__name__, exc)
             return None
 
     def _mix_background(self, voice_track):
