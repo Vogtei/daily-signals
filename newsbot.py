@@ -669,6 +669,8 @@ def main() -> None:
                     source     = top_paper.source,
                     study_phase= lead_content.get("study_phase", ""),
                     date_str   = date_str,
+                    title_en   = top_paper.title,
+                    abstract   = top_paper.abstract,
                 )
                 if img_bytes:
                     caption = (
