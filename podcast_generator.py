@@ -15,6 +15,15 @@ import tempfile
 
 logger = logging.getLogger(__name__)
 
+# Use bundled ffmpeg binary if system ffmpeg is not available (e.g. Render Python env)
+try:
+    import imageio_ffmpeg
+    _ffmpeg_bin = imageio_ffmpeg.get_ffmpeg_exe()
+    os.environ["PATH"] = os.path.dirname(_ffmpeg_bin) + os.pathsep + os.environ.get("PATH", "")
+    logger.info("Using bundled ffmpeg: %s", _ffmpeg_bin)
+except ImportError:
+    pass
+
 # Audio files (all optional)
 INTRO_JINGLE      = pathlib.Path(__file__).parent / "jingle_intro.mp3"
 TRANSITION_JINGLE = pathlib.Path(__file__).parent / "jingle_transition.mp3"
