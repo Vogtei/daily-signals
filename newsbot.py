@@ -32,8 +32,17 @@ ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
 TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
-_STATE_DIR = pathlib.Path(os.environ.get("STATE_DIR", pathlib.Path(__file__).parent))
-_STATE_DIR.mkdir(parents=True, exist_ok=True)
+def _resolve_state_dir() -> pathlib.Path:
+    candidate = pathlib.Path(os.environ.get("STATE_DIR", pathlib.Path(__file__).parent))
+    try:
+        candidate.mkdir(parents=True, exist_ok=True)
+        return candidate
+    except PermissionError:
+        fallback = pathlib.Path(__file__).parent
+        print(f"WARNING: STATE_DIR {candidate} not writable, using {fallback}")
+        return fallback
+
+_STATE_DIR = _resolve_state_dir()
 LAST_RUN_FILE = _STATE_DIR / "last_run.json"
 SEEN_ARTICLES_FILE = _STATE_DIR / "seen_articles.json"
 

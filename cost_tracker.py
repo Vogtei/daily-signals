@@ -13,8 +13,15 @@ import re
 
 logger = logging.getLogger(__name__)
 
-_STATE_DIR = pathlib.Path(os.environ.get("STATE_DIR", pathlib.Path(__file__).parent))
-_STATE_DIR.mkdir(parents=True, exist_ok=True)
+def _resolve_state_dir() -> pathlib.Path:
+    candidate = pathlib.Path(os.environ.get("STATE_DIR", pathlib.Path(__file__).parent))
+    try:
+        candidate.mkdir(parents=True, exist_ok=True)
+        return candidate
+    except PermissionError:
+        return pathlib.Path(__file__).parent
+
+_STATE_DIR = _resolve_state_dir()
 COSTS_FILE = _STATE_DIR / "costs.json"
 
 # Prices per 1M tokens (USD)
