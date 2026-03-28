@@ -33,6 +33,7 @@ TELEGRAM_BOT_TOKEN = os.environ["TELEGRAM_BOT_TOKEN"]
 TELEGRAM_CHAT_ID = os.environ["TELEGRAM_CHAT_ID"]
 
 _STATE_DIR = pathlib.Path(os.environ.get("STATE_DIR", pathlib.Path(__file__).parent))
+_STATE_DIR.mkdir(parents=True, exist_ok=True)
 LAST_RUN_FILE = _STATE_DIR / "last_run.json"
 SEEN_ARTICLES_FILE = _STATE_DIR / "seen_articles.json"
 

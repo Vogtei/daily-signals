@@ -13,7 +13,9 @@ import re
 
 logger = logging.getLogger(__name__)
 
-COSTS_FILE = pathlib.Path(os.environ.get("STATE_DIR", pathlib.Path(__file__).parent)) / "costs.json"
+_STATE_DIR = pathlib.Path(os.environ.get("STATE_DIR", pathlib.Path(__file__).parent))
+_STATE_DIR.mkdir(parents=True, exist_ok=True)
+COSTS_FILE = _STATE_DIR / "costs.json"
 
 # Prices per 1M tokens (USD)
 CLAUDE_PRICES = {
