@@ -37,36 +37,41 @@ _SOURCE_LABELS = {
 
 def _build_visual_prompt(title_en: str, abstract: str) -> str:
     """
-    Use Claude Haiku to write a focused visual scene description,
-    then wrap it in a consistent cinematic style directive for DALL-E.
+    Use Claude Haiku to write a rich cinematic DALL-E scene prompt from the paper.
+    Style mirrors high-end science visualisation: specific scene + holographic/bioluminescent
+    aesthetic + quality boosters.
     """
     try:
         import anthropic
         client = anthropic.Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
         resp = client.messages.create(
             model="claude-haiku-4-5-20251001",
-            max_tokens=180,
+            max_tokens=220,
             messages=[{"role": "user", "content": (
-                "Write a 2-sentence visual scene description in English for a DALL-E image "
-                "that illustrates this science paper. Be concrete and visual: mention specific "
-                "objects, organisms, structures or processes (e.g. glowing DNA strands, "
-                "microscopic bacteria, brain scan cross-section, robotic surgery arm). "
-                "No text, no people's faces, no abstract metaphors.\n\n"
-                f"Title: {title_en}\nAbstract: {abstract[:400]}"
+                "Write a DALL-E image prompt in English for this science paper. "
+                "Follow this exact structure (comma-separated phrases, no full sentences):\n"
+                "1. Main action/scene specific to the paper topic (e.g. 'AI neural network analyzing glowing cancer cell clusters')\n"
+                "2. Key visual elements related to the science (e.g. 'holographic DNA strands, bioluminescent protein structures, robotic surgical arm')\n"
+                "3. Environment (e.g. 'futuristic dark-blue hospital lab, high-tech clinical setting')\n"
+                "4. Concept keywords from the paper (2-3 specific terms)\n\n"
+                "Rules: ultra-specific to THIS paper's topic, no generic 'scientist in lab', "
+                "no human faces, no text/labels in image, vivid and visual.\n\n"
+                f"Title: {title_en}\nAbstract: {abstract[:500]}"
             )}],
         )
-        scene = resp.content[0].text.strip()
-        logger.debug("DALL-E visual prompt scene: %s", scene[:100])
+        # Strip any markdown headers Haiku might prepend
+        import re as _re
+        scene = _re.sub(r"^#+\s.*\n?", "", resp.content[0].text.strip()).strip()
+        logger.debug("DALL-E scene: %s", scene[:120])
     except Exception as exc:
-        logger.warning("Prompt generation failed (%s), using title fallback", exc)
-        scene = f"Scientific visualization of: {title_en}"
+        logger.warning("Prompt generation failed (%s), using fallback", exc)
+        scene = f"Futuristic scientific visualization of {title_en}, glowing molecular structures, bioluminescent data"
 
     return (
-        f"{scene} "
-        "Render as cinematic scientific photography: deep navy and black background, "
-        "glowing bioluminescent cyan and electric-blue rim lighting, "
-        "ultra-sharp macro detail, award-winning science journal cover composition. "
-        "No text, no labels, no watermarks."
+        f"{scene}, "
+        "cinematic lighting, electric blue and cyan glow, deep navy background, "
+        "ultra-detailed, photorealistic, 8k, depth of field, science journal cover quality, "
+        "no text, no labels, no watermarks"
     )
 
 
