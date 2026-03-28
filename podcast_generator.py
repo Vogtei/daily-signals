@@ -119,7 +119,7 @@ class PodcastGenerator:
             from elevenlabs.client import ElevenLabs
             from pydub import AudioSegment
         except ImportError as exc:
-            raise RuntimeError("pip install elevenlabs pydub") from exc
+            raise RuntimeError(f"Import failed ({exc}) — pip install elevenlabs pydub") from exc
 
         api_key = os.environ.get("ELEVENLABS_API_KEY")
         if not api_key:
