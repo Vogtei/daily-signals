@@ -653,9 +653,39 @@ def main() -> None:
 
     async def _send_newsletter():
         from telegram import Bot
+        from image_generator import generate_highlight_card
+        import io as _io
+
         bot = Bot(token=TELEGRAM_BOT_TOKEN)
+        lead_content = papers_data[0][0] if papers_data else {}
         chunks = _split_message(newsletter_text)
+
         async with bot:
+            # ── 1. Highlight image ───────────────────────────────────────────
+            try:
+                img_bytes = generate_highlight_card(
+                    title_de   = lead_content.get("title_simplified", top_paper.title),
+                    intro      = lead_content.get("intro", ""),
+                    source     = top_paper.source,
+                    study_phase= lead_content.get("study_phase", ""),
+                    date_str   = date_str,
+                )
+                if img_bytes:
+                    caption = (
+                        f"📡 *Daily Signals – {date_str}*\n"
+                        f"*{lead_content.get('title_simplified', top_paper.title)}*"
+                    )
+                    await bot.send_photo(
+                        chat_id    = TELEGRAM_CHAT_ID,
+                        photo      = _io.BytesIO(img_bytes),
+                        caption    = caption,
+                        parse_mode = "Markdown",
+                    )
+                    logger.info("Highlight image sent")
+            except Exception as exc:
+                logger.warning("Highlight image send failed (non-fatal): %s", exc)
+
+            # ── 2. Newsletter text ───────────────────────────────────────────
             for chunk in chunks:
                 try:
                     await bot.send_message(
