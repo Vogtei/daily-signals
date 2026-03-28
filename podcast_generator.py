@@ -45,6 +45,7 @@ TRANSITION_GAP  = 700   # silence around transition jingles (ms)
 BG_MUSIC_ENABLED = False
 BG_MUSIC_VOLUME  = -22
 BG_FADE_MS       = 3000
+JINGLE_VOLUME_DB = -10  # reduce jingle volume relative to voice
 
 CHARLOTTE_VOICE_ID = "XB0fDUnXU5powFXDhCwa"
 
@@ -153,9 +154,13 @@ class PodcastGenerator:
             raise RuntimeError("All TTS requests failed — check ELEVENLABS_API_KEY and logs above")
 
         # Assemble final track
-        jingle_intro      = self._load_audio(INTRO_JINGLE)
-        jingle_transition = self._load_audio(TRANSITION_JINGLE)
-        jingle_outro      = self._load_audio(OUTRO_JINGLE)
+        def _load_jingle(path):
+            audio = self._load_audio(path)
+            return audio.apply_gain(JINGLE_VOLUME_DB) if audio else None
+
+        jingle_intro      = _load_jingle(INTRO_JINGLE)
+        jingle_transition = _load_jingle(TRANSITION_JINGLE)
+        jingle_outro      = _load_jingle(OUTRO_JINGLE)
 
         track = AudioSegment.empty()
         for idx, (seg_type, _) in enumerate(segments):

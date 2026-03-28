@@ -103,7 +103,7 @@ Schreib ein Podcast-Skript, das sich anfühlt wie ein gutes Gespräch – nicht 
 STRUKTUR (halte dich genau daran):
 [INTRO-JINGLE]
 [TON:neugierig]
-{{Einstieg: direkt mit einem Hook – der überraschendsten Erkenntnis, einer provokanten Frage, oder einem Bild das neugierig macht. KEIN "Willkommen"-Floskeln, direkt rein.}}
+{{Einstieg: themenspezifischer Hook, der sofort ins Thema zieht. Wähle eine Einstiegsform die zum Inhalt passt – z.B. eine überraschende Zahl, eine konträre These, ein konkretes Szenario, eine rhetorische Frage, eine kurze Anekdote, oder eine provokante Behauptung. VERBOTEN: "Stell dir vor", "Willkommen", "Heute sprechen wir", "Hast du dich je gefragt". Der erste Satz muss einzigartig zu DIESEM Paper sein.}}
 [PPP]
 {{1-2 Sätze: Was werden wir heute entdecken? Macht Lust aufs Weiterhören.}}
 [PPP]
@@ -139,6 +139,7 @@ SCHREIBREGELN:
 - [PP] nach abgeschlossenen Gedanken, vor einem neuen Satz
 - [PPP] nach großen Erkenntnissen, vor Themenwechsel, für dramatischen Effekt
 - Du kannst [TON:dramatisch] für Schockmomente setzen wo es passt (z.B. überraschende Zahlen, Wendepunkte)
+- Kein Einstieg mit "Stell dir vor", "Willkommen", "Heute", "Hast du dich je gefragt" — jeder Hook muss anders sein
 - Kurze Sätze. Auch mal Fragmente. Auch mal ein einzelnes Wort.
 - Kein Fachbegriff ohne sofortige Erklärung in Klammern oder danach
 - Sprich Leon direkt an wo es passt
